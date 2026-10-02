@@ -260,6 +260,19 @@ declare namespace mGBA {
     /** Number of cheat sets currently loaded (-1 when no game is loaded). */
     getCheatSetCount(): number;
 
+    /**
+     * Memory ranges that a cheat set writes to (fixed-address ops only), for snapshot / restore.
+     * `skipped` counts indirect assigns whose address is only known at runtime.
+     * Returns `null` for an invalid index or when no game is loaded.
+     */
+    getCheatSetTargets(
+      index: number,
+      max?: number
+    ): {
+      targets: { address: number; width: number; count: number; stride: number }[];
+      skipped: number;
+    } | null;
+
     /** Enables or disables one cheat set by index. */
     setCheatSetEnabled(index: number, enabled: boolean): boolean;
 

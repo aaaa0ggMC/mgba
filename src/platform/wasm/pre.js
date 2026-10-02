@@ -492,6 +492,29 @@ Module.getCheatSetCount = () => {
   return getCheatSetCount();
 };
 
+Module.getCheatSetTargets = (index, max = 64) => {
+  const getCheatSetTargets = cwrap('getCheatSetTargets', 'number', ['number', 'number', 'number', 'number']);
+  const buf = cockpitAlloc(max * 16 + 4);
+  try {
+    const skippedPtr = buf + max * 16;
+    const n = getCheatSetTargets(index, buf, max, skippedPtr);
+    if (n < 0) return null;
+    const words = new Uint32Array(Module.HEAPU8.buffer, buf, n * 4 + 0).slice();
+    const targets = [];
+    for (let i = 0; i < n; i++) {
+      targets.push({
+        address: words[i * 4],
+        width: words[i * 4 + 1],
+        count: words[i * 4 + 2],
+        stride: words[i * 4 + 3] | 0
+      });
+    }
+    return { targets, skipped: new Int32Array(Module.HEAPU8.buffer, skippedPtr, 1)[0] };
+  } finally {
+    cockpitFree(buf);
+  }
+};
+
 Module.setCheatSetEnabled = (index, enabled) => {
   const setCheatSetEnabled = cwrap('setCheatSetEnabled', 'bool', ['number', 'bool']);
   return setCheatSetEnabled(index, enabled);

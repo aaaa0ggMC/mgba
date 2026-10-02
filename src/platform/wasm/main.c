@@ -521,6 +521,52 @@ EMSCRIPTEN_KEEPALIVE bool setCheatSetEnabled(int index, bool enabled) {
 	mCoreThreadContinue(renderer->thread);
 	return result;
 }
+// Lists the memory ranges that cheat set `index` writes to, so the host can snapshot / restore them.
+// `out` receives `max` records of 4 uint32 each: { address, width (bytes), count, stride (bytes) }; only
+// ops that write to a fixed address are listed (assign / and / add / sub / or, conditional or not).
+// Indirect assigns (pointer-relative, address only known at runtime) are counted in `*skipped`.
+// Returns the number of records written, or -1 on error.
+EMSCRIPTEN_KEEPALIVE int getCheatSetTargets(int index, uint32_t* out, int max, int* skipped) {
+	if (!renderer->core || !renderer->thread || index < 0 || !out || max < 0)
+		return -1;
+
+	int written = -1;
+	mCoreThreadInterrupt(renderer->thread);
+	struct mCheatDevice* device = renderer->core->cheatDevice(renderer->core);
+	if (device && (size_t) index < mCheatSetsSize(&device->cheats)) {
+		struct mCheatSet* set = *mCheatSetsGetPointer(&device->cheats, index);
+		written = 0;
+		*skipped = 0;
+		size_t n = mCheatListSize(&set->list);
+		for (size_t i = 0; i < n; ++i) {
+			struct mCheat* cheat = mCheatListGetPointer(&set->list, i);
+			switch (cheat->type) {
+			case CHEAT_ASSIGN:
+			case CHEAT_AND:
+			case CHEAT_ADD:
+			case CHEAT_SUB:
+			case CHEAT_OR:
+				if (written < max) {
+					uint32_t* rec = out + written * 4;
+					rec[0] = cheat->address;
+					rec[1] = (uint32_t) cheat->width;
+					rec[2] = cheat->repeat;
+					rec[3] = (uint32_t) cheat->addressOffset;
+					++written;
+				}
+				break;
+			case CHEAT_ASSIGN_INDIRECT:
+				++*skipped;
+				break;
+			default:
+				break;
+			}
+		}
+	}
+	mCoreThreadContinue(renderer->thread);
+	return written;
+}
+
 // ---- end Linux Cockpit additions ---------------------------------------------------------------
 
 EMSCRIPTEN_KEEPALIVE bool loadGame(const char* name, const char* savePathOverride) {

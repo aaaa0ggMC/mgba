@@ -15,6 +15,7 @@ Licensed under MPL-2.0 like the rest of mGBA.
 | `clearCheats()` | Remove every cheat set from the running game. |
 | `addCheats(text)` | Parse mGBA `.cheats` text and add its sets (pair with `clearCheats()` to swap cheats **without reloading**). |
 | `getCheatSetCount()` / `setCheatSetEnabled(i, on)` | Inspect / toggle loaded cheat sets. |
+| `getCheatSetTargets(i)` | Memory ranges a set writes to (`{address, width, count, stride}`; fixed-address ops only, indirect assigns counted in `skipped`) — lets the host snapshot originals before enabling a set and restore them afterwards. |
 
 The C side lives at the end of the "Linux Cockpit additions" block in `main.c`; the JS wrappers in `pre.js`.
 
