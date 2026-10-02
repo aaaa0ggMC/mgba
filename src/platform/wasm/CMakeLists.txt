@@ -2,7 +2,7 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} \
 	-O3 \
 	-s USE_SDL=2 \
 	-s INITIAL_MEMORY=256mb \
-	-s EXPORTED_RUNTIME_METHODS=[\"FS\",\"cwrap\",\"addFunction\",\"removeFunction\"] \
+	-s EXPORTED_RUNTIME_METHODS=[\"FS\",\"cwrap\",\"addFunction\",\"removeFunction\",\"HEAPU8\"] \
 	-s ALLOW_TABLE_GROWTH=1 \
 	-s ENVIRONMENT='web,worker' \
 	-s PTHREAD_POOL_SIZE=5 \

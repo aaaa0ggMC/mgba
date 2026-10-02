@@ -223,6 +223,46 @@ declare namespace mGBA {
      */
     autoLoadCheats(): boolean;
 
+    // ---- Linux Cockpit additions: memory access, live cheats, game info ----
+
+    /**
+     * Reads `length` bytes from the emulated bus starting at `address` (stops the emulation thread
+     * for the duration of the call). Returns `null` when no game is loaded.
+     */
+    readMemory(address: number, length: number): Uint8Array | null;
+
+    /**
+     * Writes bytes to the emulated bus starting at `address`.
+     *
+     * @returns False when no game is loaded.
+     */
+    writeMemory(address: number, data: Uint8Array | number[]): boolean;
+
+    /** Header information of the loaded game, or `null` when no game is loaded. */
+    getGameInfo(): {
+      platform: 'gba' | 'gb';
+      title: string;
+      /** 4-character game code (GBA: ex. "BPEE") */
+      code: string;
+      maker: string;
+      version: number;
+    } | null;
+
+    /** Removes every cheat set from the running game (cheat files on disk are untouched). */
+    clearCheats(): boolean;
+
+    /**
+     * Parses cheat text (mGBA `.cheats` format) and adds its sets to the running game.
+     * Pair with {@link clearCheats} to replace the active cheats without reloading.
+     */
+    addCheats(text: string): boolean;
+
+    /** Number of cheat sets currently loaded (-1 when no game is loaded). */
+    getCheatSetCount(): number;
+
+    /** Enables or disables one cheat set by index. */
+    setCheatSetEnabled(index: number, enabled: boolean): boolean;
+
     /**
      * Binds a physical key (SDL key name) to a GBA input action.
      *

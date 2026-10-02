@@ -424,6 +424,80 @@ Module.loadStateSlot = (slot, flags) => {
   return Module.loadStateSlot(slot, flags);
 };
 
+// ---- Linux Cockpit additions: memory access, live cheats, game info ----
+const cockpitAlloc = (size) => cwrap('cockpitAlloc', 'number', ['number'])(size);
+const cockpitFree = (ptr) => cwrap('cockpitFree', null, ['number'])(ptr);
+
+Module.readMemory = (address, length) => {
+  if (!(length > 0)) return new Uint8Array(0);
+  const readMemory = cwrap('readMemory', 'number', ['number', 'number', 'number']);
+  const ptr = cockpitAlloc(length);
+  try {
+    if (readMemory(address >>> 0, ptr, length) < 0) return null;
+    return Module.HEAPU8.slice(ptr, ptr + length);
+  } finally {
+    cockpitFree(ptr);
+  }
+};
+
+Module.writeMemory = (address, data) => {
+  const bytes = data instanceof Uint8Array ? data : Uint8Array.from(data);
+  if (bytes.length === 0) return true;
+  const writeMemory = cwrap('writeMemory', 'number', ['number', 'number', 'number']);
+  const ptr = cockpitAlloc(bytes.length);
+  try {
+    Module.HEAPU8.set(bytes, ptr);
+    return writeMemory(address >>> 0, ptr, bytes.length) >= 0;
+  } finally {
+    cockpitFree(ptr);
+  }
+};
+
+Module.getGameInfo = () => {
+  const getGameInfo = cwrap('getGameInfo', 'number', ['number', 'number', 'number', 'number']);
+  const buf = cockpitAlloc(17 + 5 + 3 + 4);
+  try {
+    const platform = getGameInfo(buf, buf + 17, buf + 22, buf + 28);
+    if (!platform) return null;
+    const str = (at, max) => {
+      let end = at;
+      while (end < at + max && Module.HEAPU8[end] !== 0) end++;
+      // HEAPU8 is backed by a SharedArrayBuffer (pthreads): TextDecoder rejects shared views, so copy first
+      return new TextDecoder().decode(Module.HEAPU8.slice(at, end));
+    };
+    return {
+      platform: platform === 1 ? 'gba' : 'gb',
+      title: str(buf, 17),
+      code: str(buf + 17, 5),
+      maker: str(buf + 22, 3),
+      version: new Int32Array(Module.HEAPU8.buffer, buf + 28, 1)[0]
+    };
+  } finally {
+    cockpitFree(buf);
+  }
+};
+
+Module.clearCheats = () => {
+  const clearCheats = cwrap('clearCheats', 'bool', []);
+  return clearCheats();
+};
+
+Module.addCheats = (text) => {
+  const addCheats = cwrap('addCheats', 'bool', ['string']);
+  return addCheats(text);
+};
+
+Module.getCheatSetCount = () => {
+  const getCheatSetCount = cwrap('getCheatSetCount', 'number', []);
+  return getCheatSetCount();
+};
+
+Module.setCheatSetEnabled = (index, enabled) => {
+  const setCheatSetEnabled = cwrap('setCheatSetEnabled', 'bool', ['number', 'bool']);
+  return setCheatSetEnabled(index, enabled);
+};
+// ---- end Linux Cockpit additions ----
+
 Module.autoLoadCheats = () => {
   const autoLoadCheats = cwrap('autoLoadCheats', 'bool', []);
   return autoLoadCheats();

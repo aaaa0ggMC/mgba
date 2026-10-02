@@ -6,6 +6,7 @@
 #include "main.h"
 
 #include <mgba-util/vfs.h>
+#include <mgba/core/cheats.h>
 #include <mgba/core/core.h>
 #include <mgba/core/serialize.h>
 #include <mgba/core/thread.h>
@@ -375,6 +376,152 @@ EMSCRIPTEN_KEEPALIVE bool autoLoadCheats() {
 	}
 	return false;
 }
+
+// ---- Linux Cockpit additions -------------------------------------------------------------------
+// Memory access, live cheat control and game info. Each call stops the emulation thread while it
+// runs (the same pattern as autoLoadCheats), so the data is coherent with a frame boundary.
+// Reads use the core's own memory blocks where there is one (fast memcpy) and `rawRead8` otherwise
+// (I/O registers etc.: no side effects). Policy (who may write, in which mode) lives in the host app.
+
+// malloc / free for the JS wrappers (the runtime does not export `_malloc` by default).
+EMSCRIPTEN_KEEPALIVE void* cockpitAlloc(size_t size) {
+	return malloc(size > 0 ? size : 1);
+}
+
+EMSCRIPTEN_KEEPALIVE void cockpitFree(void* ptr) {
+	free(ptr);
+}
+
+// Reads `length` bytes starting at the GBA/GB bus `address` into `out`. Returns the length, or -1
+// when no game is loaded.
+EMSCRIPTEN_KEEPALIVE int readMemory(uint32_t address, uint8_t* out, uint32_t length) {
+	if (!renderer->core || !renderer->thread)
+		return -1;
+
+	mCoreThreadInterrupt(renderer->thread);
+	uint32_t done = 0;
+	while (done < length) {
+		size_t blockSize = 0;
+		uint8_t* block = mCoreGetMemoryBlock(renderer->core, address + done, &blockSize);
+		if (block && blockSize) {
+			uint32_t n = length - done;
+			if (n > blockSize)
+				n = (uint32_t) blockSize;
+			memcpy(out + done, block, n);
+			done += n;
+		} else {
+			out[done] = (uint8_t) renderer->core->rawRead8(renderer->core, address + done, -1);
+			++done;
+		}
+	}
+	mCoreThreadContinue(renderer->thread);
+	return (int) length;
+}
+
+// Writes `length` bytes from `data` to the bus `address`. Returns the length, or -1 when no game is
+// loaded. Writable memory blocks are copied directly, everything else goes through `rawWrite8`.
+EMSCRIPTEN_KEEPALIVE int writeMemory(uint32_t address, const uint8_t* data, uint32_t length) {
+	if (!renderer->core || !renderer->thread)
+		return -1;
+
+	mCoreThreadInterrupt(renderer->thread);
+	uint32_t done = 0;
+	while (done < length) {
+		size_t blockSize = 0;
+		uint8_t* block = mCoreGetMemoryBlockMasked(renderer->core, address + done, &blockSize, mCORE_MEMORY_WRITE);
+		if (block && blockSize) {
+			uint32_t n = length - done;
+			if (n > blockSize)
+				n = (uint32_t) blockSize;
+			memcpy(block, data + done, n);
+			done += n;
+		} else {
+			renderer->core->rawWrite8(renderer->core, address + done, -1, data[done]);
+			++done;
+		}
+	}
+	mCoreThreadContinue(renderer->thread);
+	return (int) length;
+}
+
+// Fills the output buffers (title >= 17 bytes, code >= 5, maker >= 3) and returns the platform
+// (1 = GBA, 2 = GB / GBC), or 0 when no game is loaded. `version` receives the cart header version.
+EMSCRIPTEN_KEEPALIVE int getGameInfo(char* title, char* code, char* maker, int* version) {
+	if (!renderer->core)
+		return 0;
+
+	struct mGameInfo info;
+	memset(&info, 0, sizeof(info));
+	renderer->core->getGameInfo(renderer->core, &info);
+	memcpy(title, info.title, sizeof(info.title));
+	memcpy(code, info.code, sizeof(info.code));
+	memcpy(maker, info.maker, sizeof(info.maker));
+	*version = info.version;
+	// mPlatform: NONE = -1, GBA = 0, GB = 1  ->  0 = none, 1 = GBA, 2 = GB
+	return (int) renderer->core->platform(renderer->core) + 1;
+}
+
+// Removes every cheat set from the running game (the cheat file on disk is untouched).
+EMSCRIPTEN_KEEPALIVE bool clearCheats() {
+	if (!renderer->core || !renderer->thread)
+		return false;
+
+	mCoreThreadInterrupt(renderer->thread);
+	struct mCheatDevice* device = renderer->core->cheatDevice(renderer->core);
+	if (device)
+		mCheatDeviceClear(device);
+	mCoreThreadContinue(renderer->thread);
+	return device != NULL;
+}
+
+// Parses cheat text (mGBA `.cheats` format) and adds its sets to the running game; unlike
+// autoLoadCheats this takes the text directly and is meant to be paired with clearCheats().
+EMSCRIPTEN_KEEPALIVE bool addCheats(const char* text) {
+	if (!renderer->core || !renderer->thread || !text)
+		return false;
+
+	bool result = false;
+	mCoreThreadInterrupt(renderer->thread);
+	struct mCheatDevice* device = renderer->core->cheatDevice(renderer->core);
+	if (device) {
+		struct VFile* vf = VFileFromConstMemory(text, strlen(text));
+		if (vf) {
+			result = mCheatParseFile(device, vf);
+			vf->close(vf);
+		}
+	}
+	mCoreThreadContinue(renderer->thread);
+	return result;
+}
+
+// Number of cheat sets currently loaded (-1 when no game is loaded).
+EMSCRIPTEN_KEEPALIVE int getCheatSetCount() {
+	if (!renderer->core)
+		return -1;
+
+	struct mCheatDevice* device = renderer->core->cheatDevice(renderer->core);
+	return device ? (int) mCheatSetsSize(&device->cheats) : 0;
+}
+
+// Enables / disables one cheat set by index.
+EMSCRIPTEN_KEEPALIVE bool setCheatSetEnabled(int index, bool enabled) {
+	if (!renderer->core || !renderer->thread || index < 0)
+		return false;
+
+	bool result = false;
+	mCoreThreadInterrupt(renderer->thread);
+	struct mCheatDevice* device = renderer->core->cheatDevice(renderer->core);
+	if (device && (size_t) index < mCheatSetsSize(&device->cheats)) {
+		struct mCheatSet* set = *mCheatSetsGetPointer(&device->cheats, index);
+		set->enabled = enabled;
+		if (set->refresh)
+			set->refresh(set, device);
+		result = true;
+	}
+	mCoreThreadContinue(renderer->thread);
+	return result;
+}
+// ---- end Linux Cockpit additions ---------------------------------------------------------------
 
 EMSCRIPTEN_KEEPALIVE bool loadGame(const char* name, const char* savePathOverride) {
 	if (renderer->thread && renderer->core) {
